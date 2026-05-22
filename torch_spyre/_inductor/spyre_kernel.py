@@ -25,6 +25,7 @@ from torch._inductor.codegen.common import (
     CSEVariable,
     Kernel,
 )
+from torch_spyre._inductor.dtype_ops import DtypeOpTable
 from torch._inductor.ops_handler import DefaultHandler, StoreMode
 from torch._inductor.utils import IndentedBuffer, sympy_subs
 from torch._inductor.virtualized import V
@@ -34,6 +35,7 @@ from .constants import (
     BATCH_MATMUL_OP,
     IDENTITY_OP,
     RESTICKIFY_OP,
+    SEGMENT_OFFSETS,
 )
 from .errors import Unsupported
 from .ir import FixedTiledLayout
@@ -167,6 +169,10 @@ class SpyreOpFuncs:
         return f"spyre.exx2({a} {b} {c})"
 
     @staticmethod
+    def floor(x):
+        return PointwiseOp("floor", [x])
+
+    @staticmethod
     def ge(a, b):
         return PointwiseOp("greaterequal", [a, b])
 
@@ -202,6 +208,14 @@ class SpyreOpFuncs:
     @staticmethod
     def lt(a, b):
         return PointwiseOp("lesserthan", [a, b])
+
+    @staticmethod
+    def maximum(a, b):
+        return PointwiseOp("maximum", [a, b])
+
+    @staticmethod
+    def minimum(a, b):
+        return PointwiseOp("minimum", [a, b])
 
     @staticmethod
     def mul(a, b):
@@ -263,7 +277,13 @@ class SpyreOpFuncs:
 
     @staticmethod
     def to_dtype(x, dtype, src_dtype):
-        return PointwiseOp("to_dtype", [x])
+        assert dtype != src_dtype
+
+        op = DtypeOpTable.get_operator(src_dtype, dtype)
+        if op is None:
+            raise Unsupported(f"type conversion from {src_dtype} to {dtype}")
+
+        return PointwiseOp(op, [x])
 
     @staticmethod
     def truediv(a, b):
@@ -384,7 +404,10 @@ class SpyreKernel(Kernel[CSEVariable]):
             device_coords,
             tensor.layout.allocation,
         )
-        if not tensor.layout.allocation:
+        if (
+            "lx" not in tensor.layout.allocation
+            and "pool" not in tensor.layout.allocation
+        ):
             self.spyre_kernel_args.append((name, tensor_arg))
         return tensor_arg
 
@@ -396,22 +419,25 @@ class SpyreKernel(Kernel[CSEVariable]):
         op_info: dict[str, Any],
     ) -> OpSpec:
         for arg in args:
-            if arg.device_dtype == DataFormats.IEEE_FP32 and op not in SPYRE_FP32_OPS:
+            if DtypeOpTable.is_dtype_op(op):
+                continue
+            elif arg.device_dtype == DataFormats.IEEE_FP32 and op not in SPYRE_FP32_OPS:
                 raise Unsupported(f"{op} on {arg.device_dtype}")
             elif arg.device_dtype not in [
                 DataFormats.IEEE_FP32,
                 DataFormats.SEN169_FP16,
+                DataFormats.IEEE_INT32,
             ]:
                 raise Unsupported(f"operation on {arg.device_dtype}")
 
         it_space = iteration_space(self.current_node)
 
         ir_node = self.current_node.node  # ComputedBuffer
-        core_division: dict[sympy.Symbol, int] = {}
+        work_division: dict[sympy.Symbol, int] = {}
         if hasattr(ir_node, "op_it_space_splits"):
             write_index = next(iter(self.current_node.read_writes.writes)).index
             read_index = next(iter(self.current_node.read_writes.reads)).index
-            core_division = apply_splits_from_index_coeff(
+            work_division = apply_splits_from_index_coeff(
                 ir_node.op_it_space_splits,
                 write_index,
                 read_index,
@@ -419,7 +445,7 @@ class SpyreKernel(Kernel[CSEVariable]):
             )
 
         it_space_extended = {
-            k: (v, core_division.get(k, 1)) for k, v in it_space.items()
+            k: (v, work_division.get(k, 1)) for k, v in it_space.items()
         }
 
         return OpSpec(
@@ -431,13 +457,15 @@ class SpyreKernel(Kernel[CSEVariable]):
         )
 
     def remove_kernel_local_buffers(self) -> None:
-        """Remove buffers that have a scratchpad allocation from the kernel's arg list."""
+        """Remove buffers that have a scratchpad or temporary allocation from the kernel's arg list."""
         for name in list(self.store_buffer_names):
             buf = V.graph.get_buffer(name)
             if buf is None:
                 continue
             layout = buf.get_layout()
-            if isinstance(layout, FixedTiledLayout) and layout.allocation:
+            if isinstance(layout, FixedTiledLayout) and (
+                "lx" in layout.allocation or "pool" in layout.allocation
+            ):
                 self.remove_buffer(name)
 
     def load(self, name: str, index: sympy.Expr):
@@ -447,7 +475,7 @@ class SpyreKernel(Kernel[CSEVariable]):
         if not isinstance(layout, FixedTiledLayout):
             raise Unsupported(f"{name} does not have FixedTiledLayout")
         index = sympy_subs(index, V.graph.sizevars.precomputed_replacements)
-        if not layout.allocation:
+        if "lx" not in layout.allocation and "pool" not in layout.allocation:
             _ = self.args.input(name)
 
         if logger.isEnabledFor(logging.DEBUG):
@@ -465,11 +493,11 @@ class SpyreKernel(Kernel[CSEVariable]):
         value: RValue,
         mode: StoreMode = None,
     ) -> None:
-        _ = self.args.output(name)
         buf = V.graph.get_buffer(name)
         layout = buf.get_layout()
         if not isinstance(layout, FixedTiledLayout):
             raise Unsupported(f"{name} does not have FixedTiledLayout")
+        _ = self.args.output(name)
         index = sympy_subs(index, V.graph.sizevars.precomputed_replacements)
         dst = TensorAccess(name, index, layout)
         real_dst_name = V.graph.scheduler.mutation_real_name.get(name, name)
@@ -521,18 +549,17 @@ class SpyreKernel(Kernel[CSEVariable]):
         self, name: str, index: sympy.Expr, value: ReductionOp | UnimplementedOp
     ) -> None:
         """Convert an RValue"""
-        _ = self.args.output(name)
         buf = V.graph.get_buffer(name)
         layout = buf.get_layout()
         if not isinstance(layout, FixedTiledLayout):
             raise Unsupported(f"{name} does not have FixedTiledLayout")
+        _ = self.args.output(name)
         index = sympy_subs(index, V.graph.sizevars.precomputed_replacements)
         dst = TensorAccess(name, index, layout)
         real_dst_name = V.graph.scheduler.mutation_real_name.get(name, name)
         if real_dst_name != name:
             # Skip allocating an output buffer; this name is an alias to another buffer
             V.graph.removed_buffers.add(name)
-
         if isinstance(value, UnimplementedOp):
             self.op_specs.append(value)
             return
@@ -586,8 +613,16 @@ class SpyreKernel(Kernel[CSEVariable]):
 
         # Now that all loads/stores have been processed we know the final kernel_args and can map names to indices
         actuals = self.args.python_argdefs()[1]
+        pool_size = getattr(V.graph, "pool_size", 0)
+        has_pool_allocations = pool_size > 0
+
         for name, tensor_arg in self.spyre_kernel_args:
             tensor_arg.arg_index = actuals.index(name)
+            tensor_arg.allocation["hbm"] = SEGMENT_OFFSETS[
+                tensor_arg.arg_index + 1
+                if has_pool_allocations
+                else tensor_arg.arg_index
+            ]
 
         buf = IndentedBuffer()
         buf.writeline("[")
@@ -655,7 +690,13 @@ class SpyreKernel(Kernel[CSEVariable]):
         """Codegen a call to this kernel"""
         wrapper = V.graph.wrapper_code
         call_args = []
+
+        if getattr(V.graph, "pool_size", 0) > 0:
+            call_args.append("_pool")
+
+        # Add remaining kernel arguments
         call_args.extend(self.args.python_argdefs()[1])
+
         call_args_str = ", ".join(call_args)
         wrapper.writeline(f"{name}.run({call_args_str})")
 

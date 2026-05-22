@@ -47,8 +47,6 @@ It supports two execution paths:
 torch-spyre/
 ├── torch_spyre/                 # Main Python package
 │   ├── __init__.py              # Device registration, lazy init, _autoload entry point
-│   ├── ops.py                   # Base ops file (extended by codegen)
-│   ├── fallbacks.py             # CPU fallback operator registry
 │   ├── _monkey_patch.py         # Patches torch.Tensor for Spyre awareness
 │   ├── constants.py             # DEVICE_NAME = "spyre"
 │   ├── csrc/                    # C++ sources (pybind11 → torch_spyre._C and ._hooks)
@@ -60,15 +58,11 @@ torch-spyre/
 │   │   └── spyre_sendnn_utils.* # SendNN tensor descriptor utilities
 │   ├── _inductor/               # Inductor compiler backend (see below)
 │   ├── ops/                     # Ops team: eager, fallbacks, decompositions, lowering, customops
+│   │   ├── eager.py             # Base ops file
+│   │   ├── fallbacks.py         # CPU fallback operator registry
 │   ├── execution/               # Runtime: async_compile, kernel_runner, OpSpec
 │   ├── device/                  # Device interface and override utilities
 │   └── memory/                  # Memory/DMA (placeholder for future work)
-│
-├── codegen/                     # Eager-mode codegen (generates codegen_ops.py)
-│   ├── gen.py                   # Main codegen script
-│   ├── inputs/                  # ATen op declarations + Metadata.yaml
-│   ├── templates/               # Jinja2 templates (base, fallback, view, etc.)
-│   └── utils/                   # Arg mapping, shape extraction, template tools
 │
 ├── tests/                       # Test suite
 │   ├── test_ops.py              # Eager operator tests
@@ -86,8 +80,8 @@ torch-spyre/
 │   └── work_division_*.md       # Multi-core parallelism docs
 │
 ├── examples/                    # Usage examples (softmax, gelu, mul, etc.)
-├── setup.py                     # Build: codegen + C++ extension compilation
-├── pyproject.toml               # PEP 517/518 metadata, deps (torch~=2.10.0)
+├── setup.py                     # Build: C++ extension compilation
+├── pyproject.toml               # PEP 517/518 metadata, deps (torch~=2.11.0)
 └── tools/                       # Developer tooling (lint, format, mypy)
 ```
 
@@ -196,13 +190,11 @@ Two separate pybind11 modules:
 
 `setup.py` does:
 
-1. **Codegen**: `codegen/gen.py` → generates `torch_spyre/codegen_ops.py`
-   (requires `sendnn`)
-2. **C++ compilation**: Two `CppExtension` targets (`_C` and `_hooks`) linking
+1. **C++ compilation**: Two `CppExtension` targets (`_C` and `_hooks`) linking
    against `sendnn`, `flex`
-3. **Entry point**: `torch.backends` → `torch_spyre = torch_spyre:_autoload`
+2. **Entry point**: `torch.backends` → `torch_spyre = torch_spyre:_autoload`
 
-Key external deps: `torch~=2.10.0`, `sendnn`, `flex`, `dxp_standalone`
+Key external deps: `torch~=2.11.0`, `sendnn`, `flex`, `dxp_standalone`
 
 ---
 
@@ -212,7 +204,7 @@ Key external deps: `torch~=2.10.0`, `sendnn`, `flex`, `dxp_standalone`
    `_autoload()`
 2. Imports `._hooks` → registers PrivateUse1 hooks + device guard
 3. Renames backend to `"spyre"`, registers device module
-4. Imports codegen ops, preloads Inductor decomposition overrides
+4. Imports eager ops, preloads Inductor decomposition overrides
 5. Wraps `compile_fx` for transparent Spyre detection
 6. **Lazy init**: Heavy runtime (`flex.CreateRuntimeInterface`,
    `_C.start_runtime`) only starts on first device access
