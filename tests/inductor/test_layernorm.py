@@ -12,7 +12,8 @@ from utils_inductor import compare_with_cpu
 @pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 class TestLayerNormNegative:
-    torch.manual_seed(0xAFFE)
+    def setup_method(self):
+        torch.manual_seed(0xAFFE)
 
     @pytest.mark.xfail(
         reason="Spyre backend: views not supported for non-contiguous tensors"

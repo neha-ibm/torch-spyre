@@ -104,6 +104,7 @@ jobs:
   run-tests:
     needs: changes
     if: needs.changes.outputs.code_changed == 'true'
+
     uses: ./.github/workflows/_test_matrix.yaml
     with:
       runner_label: linux
@@ -118,6 +119,122 @@ jobs:
       rpm_names: ${{ inputs.rpm_names || '' }}
       build_torch_spyre: ${{ inputs.build_torch_spyre == true }}
       test_type: ${{ inputs.test_type || 'full' }}
+    runs-on:
+      - x86_64
+      - spyre_pf_x1
+      - linux
+      - image_torch_spyre
+    timeout-minutes: 60
+    env:
+      # The CI env var is very important.
+      # GitHub actions automatically sets CI=true
+      # which causes the pytest inductor tests to fail with AssertionError
+      # due to a mix of fallbacks and decompositions.
+      # Here we set it to an empty string (or we could also unset it).
+      CI: ''
+      CLONED_TORCH_SPYRE_DIR: /home/senuser/torch-spyre
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: Test Device Enum
+            config: torch_spyre_tests/test_device_enum_config.yaml
+          - name: Test Fallbacks
+            config: torch_spyre_tests/test_fallbacks_config.yaml
+          - name: Test Modules
+            config: torch_spyre_tests/test_modules_config.yaml
+          - name: Test Regex
+            config: torch_spyre_tests/test_regex_config.yaml
+          - name: Test Spyre
+            config: torch_spyre_tests/test_spyre_config.yaml
+          - name: Test Spyre Lazy Silent
+            config: torch_spyre_tests/test_spyre_lazy_silent_config.yaml
+          - name: Test Stream
+            config: torch_spyre_tests/test_stream_config.yaml
+          - name: Test Spyre Profiler
+            config: torch_spyre_tests/test_spyre_profiler_config.yaml
+          - name: Test Prepare Kernel
+            config: torch_spyre_tests/test_prepare_kernel_config.yaml
+          # Inductor tests
+          - name: Inductor Building Blocks
+            config: torch_spyre_tests/inductor/test_building_blocks_config.yaml
+          - name: Inductor Codegen
+            config: torch_spyre_tests/inductor/test_codegen_config.yaml
+          - name: Inductor Decomp
+            config: torch_spyre_tests/inductor/test_decomp_config.yaml
+          - name: Inductor FX Passes
+            config: torch_spyre_tests/inductor/test_inductor_fx_passes_config.yaml
+          - name: Inductor Normalization Scalars
+            config: torch_spyre_tests/inductor/test_normalization_scalars_config.yaml
+          - name: Inductor Ops
+            config: torch_spyre_tests/inductor/test_inductor_ops_config.yaml
+          - name: Inductor Ops LX Planning
+            config: torch_spyre_tests/inductor/test_ops_lx_planning_config.yaml
+          - name: Inductor Scalar
+            config: torch_spyre_tests/inductor/test_inductor_scalar_config.yaml
+          - name: Inductor Logging
+            config: torch_spyre_tests/inductor/test_logging_config.yaml
+          - name: Inductor Dedup Constants
+            config: torch_spyre_tests/inductor/test_dedup_constants_config.yaml
+          - name: Inductor Padding
+            config: torch_spyre_tests/inductor/test_padding_config.yaml
+          - name: Inductor Overwrite
+            config: torch_spyre_tests/inductor/test_overwrite.yaml
+          - name: Inductor Restickify
+            config: torch_spyre_tests/inductor/test_restickify_config.yaml
+          - name: Inductor Scratchpad Patterns
+            config: torch_spyre_tests/inductor/test_scratchpad_patterns_config.yaml
+          - name: Inductor Scratchpad Use
+            config: torch_spyre_tests/inductor/test_scratchpad_use_config.yaml
+          - name: Inductor Dtype Scalars
+            config: torch_spyre_tests/inductor/test_dtype_scalars_config.yaml
+          - name: Inductor Cache
+            config: torch_spyre_tests/inductor/test_cache_config.yaml
+          - name: Inductor Scratchpad Solver
+            config: torch_spyre_tests/inductor/test_scratchpad_solver_config.yaml
+          # Tensor tests
+          - name: Tensor Coordinates
+            config: torch_spyre_tests/tensors/test_coordinates_config.yaml
+          - name: Tensor It Space Splits
+            config: torch_spyre_tests/tensors/test_it_space_splits_config.yaml
+          - name: Tensor Layout
+            config: torch_spyre_tests/tensors/test_tensor_layout_config.yaml
+          - name: Inductor Layernorm
+            config: torch_spyre_tests/inductor/test_layernorm_config.yaml
+
+    steps:
+      # Sparse checkout into the GHA workspace so the local composite
+      # actions under .github/actions/ are available. The pre-cloned
+      # repo at $CLONED_TORCH_SPYRE_DIR is what the tests actually run
+      # against.
+      - name: Checkout composite actions
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
+      - uses: ./.github/actions/checkout-prebuilt-torch-spyre
+
+      - uses: ./.github/actions/gather-runner-info
+        with:
+          verbose: 'true'
+
+      - uses: ./.github/actions/build-torch-spyre
+
+      - name: Run ${{ matrix.suite.name }} tests
+        run: |
+          source "$HOME/.bashrc"
+          source /etc/profile.d/ibm-aiu-setup.sh
+          cd "$CLONED_TORCH_SPYRE_DIR"
+          source .venv/bin/activate
+
+          CONFIG="${{ matrix.suite.config }}"
+
+          echo "Running ${{ matrix.suite.name }} tests..."
+          bash tests/run_test.sh "tests/configs/${CONFIG}" -v --capture=sys
+          echo "${{ matrix.suite.name }} tests done"
+
 
   # ---------------------------------------------------------------------------
   # Job 3: run-spyre-unit-tests (required check gate)
