@@ -6,16 +6,12 @@ import torch.nn.functional as F
 from utils_inductor import compare_with_cpu
 
 
-
 # PART 1: NEGATIVE & REGRESSION TESTS
-
 
 
 @pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 class TestLayerNormNegative:
-   
-
     torch.manual_seed(0xAFFE)
 
     @pytest.mark.xfail(
@@ -23,12 +19,14 @@ class TestLayerNormNegative:
     )
     def test_non_contiguous_input(self, execution_mode):
         """Non-contiguous input (transposed) — backend consistency check."""
+
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
 
         x = torch.randn(10, 2, dtype=torch.float16).transpose(0, 1)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -38,13 +36,15 @@ class TestLayerNormNegative:
     )
     def test_nan_input(self, execution_mode):
         """NaN in input tensor — numerical propagation parity."""
+
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
 
         x = torch.randn(2, 10, dtype=torch.float16)
         x[0, 0] = float("nan")
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -54,12 +54,14 @@ class TestLayerNormNegative:
     )
     def test_large__values(self, execution_mode):
         """Large magnitude values — stability under scale."""
+
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
 
         x = torch.randn(2, 10, dtype=torch.float16) * 1e3
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -69,12 +71,14 @@ class TestLayerNormNegative:
     )
     def test_1d_tensor_edge_case(self, execution_mode):
         """1D tensor — valid boundary acceptance."""
+
         def fn(x):
             return F.layer_norm(x, x.shape)
 
         x = torch.randn(10, dtype=torch.float16)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -84,6 +88,7 @@ class TestLayerNormNegative:
     )
     def test_exactly_6_args_boundary(self, execution_mode):
         """Exactly 6 arguments — core regression guard for PR #337."""
+
         def fn(x, w, b):
             return F.layer_norm(x, x.shape[1:], weight=w, bias=b, eps=1e-5)
 
@@ -101,6 +106,7 @@ class TestLayerNormNegative:
     )
     def test_5_args_no_regression(self, execution_mode):
         """5 arguments — no regression below fix boundary."""
+
         def fn(x, w):
             return F.layer_norm(x, x.shape[1:], weight=w, eps=1e-5)
 
@@ -117,6 +123,7 @@ class TestLayerNormNegative:
     )
     def test_4_args_no_regression(self, execution_mode):
         """4 arguments — no regression below fix boundary."""
+
         def fn(x):
             return F.layer_norm(x, x.shape[1:], eps=1e-5)
 
@@ -132,6 +139,7 @@ class TestLayerNormNegative:
     )
     def test_3_args_minimal(self, execution_mode):
         """3 arguments — minimal path (lowest supported path remains valid)."""
+
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
 
@@ -146,12 +154,9 @@ class TestLayerNormNegative:
 # PART 2: ARGUMENT SCALING & NORM COMPARISONS
 
 
-
 @pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 class TestNormArgScaling:
-  
-
     T = 64
     D = 256
 
@@ -165,7 +170,8 @@ class TestNormArgScaling:
             return F.layer_norm(x, x.shape[1:])
 
         compare_with_cpu(
-            fn, torch.randn(self.T, self.D, dtype=torch.float16),
+            fn,
+            torch.randn(self.T, self.D, dtype=torch.float16),
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -180,7 +186,8 @@ class TestNormArgScaling:
             return F.layer_norm(x, x.shape[1:], weight=None, bias=None)
 
         compare_with_cpu(
-            fn, torch.randn(self.T, self.D, dtype=torch.float16),
+            fn,
+            torch.randn(self.T, self.D, dtype=torch.float16),
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -251,7 +258,8 @@ class TestNormArgScaling:
             return layer(x)
 
         compare_with_cpu(
-            fn, torch.randn(self.T, self.D, dtype=torch.float16),
+            fn,
+            torch.randn(self.T, self.D, dtype=torch.float16),
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -316,7 +324,7 @@ class TestNormArgScaling:
         torch.manual_seed(4242)
 
         def fn(x, w):
-            rms = torch.sqrt((x ** 2).mean(dim=-1, keepdim=True) + 1e-5)
+            rms = torch.sqrt((x**2).mean(dim=-1, keepdim=True) + 1e-5)
             return x / rms * w
 
         compare_with_cpu(
@@ -347,16 +355,12 @@ class TestNormArgScaling:
         )
 
 
-
 # PART 3: BACKEND DIVERGENCE & STRESS TESTS
-
 
 
 @pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 class TestLayerNormBackendStress:
-   
-
     torch.manual_seed(0xBEEF)
 
     @pytest.mark.xfail(
@@ -370,7 +374,10 @@ class TestLayerNormBackendStress:
         w = torch.ones(10, dtype=torch.float16)
         b = torch.zeros(10, dtype=torch.float16)
         compare_with_cpu(
-            fn, x, w, b,
+            fn,
+            x,
+            w,
+            b,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -384,7 +391,8 @@ class TestLayerNormBackendStress:
 
         x = (torch.randn(2, 10) * 1e4).to(torch.float16)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -398,7 +406,8 @@ class TestLayerNormBackendStress:
 
         x = torch.ones(2, 10, dtype=torch.float16) * 5.0
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -412,7 +421,8 @@ class TestLayerNormBackendStress:
 
         x = torch.randn(2, 10, dtype=torch.float16)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -426,7 +436,8 @@ class TestLayerNormBackendStress:
 
         x = torch.randn(2, 3, 4, 5, 10, dtype=torch.float16)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -438,22 +449,19 @@ class TestLayerNormBackendStress:
 
         x = torch.randint(0, 10, (2, 10), dtype=torch.int32)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
 
 
-
 # PART 4: COMPREHENSIVE EDGE CASES
-
 
 
 @pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 class TestLayerNormEdgeCases:
-   
-
     torch.manual_seed(0xAFFE)
 
     @pytest.mark.xfail(
@@ -588,9 +596,7 @@ class TestLayerNormEdgeCases:
             run_eager=(execution_mode == "eager"),
         )
 
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for all-zero input"
-    )
+    @pytest.mark.xfail(reason="Spyre backend: returns zeros for all-zero input")
     def test_all_zeros(self, execution_mode):
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
@@ -681,9 +687,13 @@ class TestLayerNormEdgeCases:
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
 
-        x = torch.full((2, 10), 1e3, dtype=torch.float16) + torch.randn(2, 10, dtype=torch.float16) * 1e-2
+        x = (
+            torch.full((2, 10), 1e3, dtype=torch.float16)
+            + torch.randn(2, 10, dtype=torch.float16) * 1e-2
+        )
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -698,7 +708,8 @@ class TestLayerNormEdgeCases:
         x = torch.randn(2, 10, dtype=torch.float16)
         x[0, 0] = float("nan")
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -713,7 +724,8 @@ class TestLayerNormEdgeCases:
         x = torch.randn(2, 10, dtype=torch.float16)
         x[0, 0] = float("inf")
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -728,14 +740,13 @@ class TestLayerNormEdgeCases:
         x = torch.randn(2, 10, dtype=torch.float16)
         x[0, 0] = float("-inf")
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
 
-    @pytest.mark.xfail(
-        reason="Spyre backend: mixed NaN/Inf propagation returns zeros"
-    )
+    @pytest.mark.xfail(reason="Spyre backend: mixed NaN/Inf propagation returns zeros")
     def test_mixed_inf_nan(self, execution_mode):
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
@@ -745,7 +756,8 @@ class TestLayerNormEdgeCases:
         x[0, 1] = float("inf")
         x[0, 2] = float("-inf")
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -815,21 +827,21 @@ class TestLayerNormEdgeCases:
 
         x = torch.randn(10, 2, dtype=torch.float16).transpose(0, 1)
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
 
-    @pytest.mark.xfail(
-        reason="Spyre backend: views not supported for strided tensors"
-    )
+    @pytest.mark.xfail(reason="Spyre backend: views not supported for strided tensors")
     def test_strided_slice(self, execution_mode):
         def fn(x):
             return F.layer_norm(x, x.shape[1:])
 
         x = torch.randn(20, 10, dtype=torch.float16)[::2]
         compare_with_cpu(
-            fn, x,
+            fn,
+            x,
             run_compile=(execution_mode == "compiled"),
             run_eager=(execution_mode == "eager"),
         )
@@ -854,6 +866,7 @@ class TestLayerNormEdgeCases:
     )
     def test_6arg_dynamic_shape(self, execution_mode):
         """6-arg path with normalized_shape derived from input dim at runtime."""
+
         def fn(x, w, b):
             return F.layer_norm(x, (x.shape[-1],), weight=w, bias=b)
 
