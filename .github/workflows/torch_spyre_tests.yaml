@@ -169,6 +169,8 @@ jobs:
             config: torch_spyre_tests/tensors/test_it_space_splits_config.yaml
           - name: Tensor Layout
             config: torch_spyre_tests/tensors/test_tensor_layout_config.yaml
+          - name: Inductor Layernorm
+            config: torch_spyre_tests/inductor/test_layernorm_config.yaml
 
     steps:
       # Sparse checkout into the GHA workspace so the local composite
