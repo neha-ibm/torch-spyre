@@ -363,14 +363,27 @@ auto get_device_stride_infos(c10::IntArrayRef sizes,
 auto generate_dci(const at::Tensor* cpu_tensor, const at::Tensor* dev_tensor,
                   SpyreTensorLayout stl, int64_t cpu_offset, bool host2device)
     -> DataConversionInfo {
-  auto str_type = torchScalarToString[cpu_tensor->scalar_type()];
-  const auto [dtype_cpu, dtype_dev] = stringToDTDataFormatPair(str_type);
+  // Support dtype conversion: populate DCI with both source and destination
+  // dtype formats
+  auto cpu_str_type = torchScalarToString[cpu_tensor->scalar_type()];
+  auto dev_str_type = torchScalarToString[dev_tensor->scalar_type()];
+  const auto [cpu_format_host, cpu_format_dev] =
+      stringToDTDataFormatPair(cpu_str_type);
+  TORCH_CHECK(cpu_format_host != DataFormats::INVALID &&
+                  cpu_format_dev != DataFormats::INVALID,
+              "Unsupported CPU tensor dtype for DMA transfer: ", cpu_str_type);
+  const auto [dev_format_host, dev_format_dev] =
+      stringToDTDataFormatPair(dev_str_type);
+  TORCH_CHECK(
+      dev_format_host != DataFormats::INVALID &&
+          dev_format_dev != DataFormats::INVALID,
+      "Unsupported Spyre tensor dtype for DMA transfer: ", dev_str_type);
 
   DataConversionInfo dci{};
   dci.dci_dsName_ = "DCI-Tensor-0";
   dci.isHostToSen_ = host2device;
-  dci.dataformat_src_ = host2device ? dtype_cpu : dtype_dev;
-  dci.dataformat_dst_ = host2device ? dtype_dev : dtype_cpu;
+  dci.dataformat_src_ = host2device ? cpu_format_host : dev_format_dev;
+  dci.dataformat_dst_ = host2device ? dev_format_dev : cpu_format_host;
 
   std::vector<int64_t> cpu_shape;
   std::vector<int64_t> dev_shape = stl.device_size;
@@ -444,6 +457,12 @@ at::Tensor spyre_empty(c10::IntArrayRef size,
               "Pin memory can only be on CPU");
   TORCH_CHECK(spyre::is_supported_dtype(dtype),
               "Spyre backend does not support dtype ", dtype);
+  const auto memory_format =
+      memory_format_opt.value_or(c10::MemoryFormat::Contiguous);
+  TORCH_CHECK(memory_format == c10::MemoryFormat::Contiguous ||
+                  memory_format == c10::MemoryFormat::Preserve,
+              "Spyre backend only supports contiguous memory format, got: ",
+              memory_format);
   const c10::DeviceGuard device_guard(device);
 
   auto device_layout = SpyreTensorLayout(size.vec(), dtype);
@@ -648,6 +667,12 @@ at::Tensor empty_with_layout(
               "Pin memory can only be on CPU");
   TORCH_CHECK(spyre::is_supported_dtype(dtype),
               "Spyre backend does not support dtype ", dtype);
+  const auto memory_format =
+      memory_format_opt.value_or(c10::MemoryFormat::Contiguous);
+  TORCH_CHECK(memory_format == c10::MemoryFormat::Contiguous ||
+                  memory_format == c10::MemoryFormat::Preserve,
+              "Spyre backend only supports contiguous memory format, got: ",
+              memory_format);
   const c10::DeviceGuard device_guard(device);
 
   size_t device_size_bytes = get_device_size_in_bytes(device_layout);
