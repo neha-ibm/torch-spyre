@@ -12,67 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for logging infrastructure."""
-
-import os
-import logging
-from unittest.mock import patch
-import torch  # noqa: F401
-import torch_spyre._inductor.logging_utils as logging_utils
-from torch_spyre._inductor.logging_utils import (
-    get_inductor_logger,
-    is_inductor_logging_enabled,
-)
-
-
-class TestLoggingConfiguration:
-    def setup_method(self, method):
-        torch.manual_seed(0xAFFE)
-
-    def test_default_is_disabled(self):
-        with patch.object(logging_utils, "_INDUCTOR_LOGGING_ENABLED", None):
-            with patch.dict(os.environ, {}, clear=True):
-                assert not is_inductor_logging_enabled()
-                logger = get_inductor_logger("test_disabled")
-                assert logger.level == logging.WARNING
-
-    def test_enabled_defaults_to_info_level(self):
-        with patch.object(logging_utils, "_INDUCTOR_LOGGING_ENABLED", None):
-            with patch.dict(os.environ, {"SPYRE_INDUCTOR_LOG": "1"}, clear=True):
-                assert is_inductor_logging_enabled()
-                logger = get_inductor_logger("test_enabled")
-                assert logger.level == logging.INFO
-
-
-class TestLoggingOperations:
-    def setup_method(self, method):
-        torch.manual_seed(0xAFFE)
-
-    def test_create_logger(self):
-        logger = get_inductor_logger("test_module")
-        assert logger is not None
-        assert logger.name.endswith("test_module")
-
-    def test_logging_does_not_crash(self):
-        logger = get_inductor_logger("test")
-        logger.debug("test message")
-        logger.info("test message")
-        logger.warning("test message")
-        logger.debug("test message with data: shape=[2, 3], device_size=[1, 2, 3]")
-# Copyright 2025 The Torch-Spyre Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import os
 import pytest
 import torch
@@ -272,50 +211,19 @@ CHUNKING_5D_PARAM_SETS = {
     "21_9_buried_core_5d": (_mul, (1, 1, 4500000000, 1, 1), (1, 1, 4500000000, 1, 1), torch.float16, None),
 }
 
-EXPECTED_FAILURES_1D = _expand_xfails([
-    "cat3_total_gt_8gb",
-    "cat4_span_gt_256_total_gt_8gb",
-    "22_1_prime_span_collapse",
-    "22_2_floor_division_boundary",
-], CHUNKING_1D_PARAM_SETS)
+EXPECTED_FAILURES_1D = []
 CHUNKING_1D_PARAM_SETS = _expand_dict(CHUNKING_1D_PARAM_SETS)
 
-EXPECTED_FAILURES_2D = _expand_xfails([
-    "cat3_total_gt_8gb",
-    "cat4_span_gt_256_total_gt_8gb",
-], CHUNKING_2D_PARAM_SETS)
+EXPECTED_FAILURES_2D = []
 CHUNKING_2D_PARAM_SETS = _expand_dict(CHUNKING_2D_PARAM_SETS)
 
-EXPECTED_FAILURES_3D = _expand_xfails([
-    "cat3_total_gt_8gb",
-    "cat4_span_gt_256_total_gt_8gb",
-    "2_1_basic_chunking_exp_sigmoid",
-    "6_1_prime_batch_dim",
-    "6_2_prime_m_dim",
-    "7_1_batch1_m1_only_n_splittable",
-    "8_1_25gb_three_or_more_chunks",
-    "9_3_where_conditional",
-    "14_5_deep_five_op_chain",
-    "16_4_batch1_m1_extreme_n",
-    "17_2_prime_m_prime_n",
-    "20_2_all_ones_except_m",
-    "20_3_all_ones_except_batch",
-], CHUNKING_3D_PARAM_SETS)
+EXPECTED_FAILURES_3D = []
 CHUNKING_3D_PARAM_SETS = _expand_dict(CHUNKING_3D_PARAM_SETS)
 
-EXPECTED_FAILURES_4D = _expand_xfails([
-    "cat3_total_gt_8gb",
-    "cat4_span_gt_256_total_gt_8gb",
-    "8_2_4d_50gb_six_or_more_chunks",
-], CHUNKING_4D_PARAM_SETS)
+EXPECTED_FAILURES_4D = []
 CHUNKING_4D_PARAM_SETS = _expand_dict(CHUNKING_4D_PARAM_SETS)
 
-EXPECTED_FAILURES_5D = _expand_xfails([
-    "cat3_total_gt_8gb",
-    "cat4_span_gt_256_total_gt_8gb",
-    "8_2_5d_50gb_six_or_more_chunks",
-    "21_9_buried_core_5d",
-], CHUNKING_5D_PARAM_SETS)
+EXPECTED_FAILURES_5D = []
 CHUNKING_5D_PARAM_SETS = _expand_dict(CHUNKING_5D_PARAM_SETS)
 
 CUSTOM_OP_PARAM_SETS = {
@@ -541,32 +449,7 @@ CUSTOM_OP_PARAM_SETS = {
     ),
 }
 
-EXPECTED_FAILURES_CUSTOM = {
-    "float8_e4m3fn_relu_large",
-    "float8_e4m3fn_relu_span_large",
-    "float8_e4m3fn_relu_span_total_large",
-    "float8_e5m2_relu_large",
-    "float8_e5m2_relu_span_large",
-    "float8_e5m2_relu_span_total_large",
-    "float8_e4m3fn_add_large",
-    "float8_e4m3fn_add_span_large",
-    "float8_e4m3fn_add_span_total_large",
-    "int8_neg_abs_large",
-    "int8_neg_abs_span_large",
-    "int8_neg_abs_span_total_large",
-    "int8_add_large",
-    "int8_add_span_large",
-    "int8_add_span_total_large",
-    "non_contiguous_slice_large",
-    "non_contiguous_slice_span_large",
-    "non_contiguous_slice_span_total_large",
-    "expand_zero_stride_large",
-    "expand_zero_stride_span_large",
-    "expand_zero_stride_span_total_large",
-    "in_place_mutation_conflict_large",
-    "in_place_mutation_conflict_span_large",
-    "in_place_mutation_conflict_span_total_large",
-}
+EXPECTED_FAILURES_CUSTOM = set()
 
 def _make_custom_params(param_sets, expect_fail=None):
     expect_fail = expect_fail or set()
