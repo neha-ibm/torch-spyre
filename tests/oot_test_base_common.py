@@ -6,14 +6,14 @@ Shared class and methods for all OOT PyTorch test overrides.
 
 import os
 import json
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import warnings
 
-import regex as re
 import pytest  # type: ignore
 import torch
 
 from oot_test_constants import (
+    _DYNAMIC_TAG_PREFIXES,
     DEFAULT_FLOATING_PRECISION,
     ENV_TEST_CONFIG,
     MODE_MANDATORY_SUCCESS,
@@ -43,6 +43,9 @@ from oot_upstream_patcher import (
     _OOTModuleDtypePatcher,
     _OOTOpMarkerPatcher,
     _OOTPrecisionOverridePatcher,
+    _OOTNativeDeviceTypesPatcher,
+    _OOTCpuMovePatcher,
+    _OOTPlatformMarkerPatcher,
 )
 from oot_test_config_models import (
     OOTTestConfig,
@@ -55,24 +58,18 @@ from oot_test_common_methods_invocations import (
     create_module_inputs_func_from_yaml,
     create_module_inputs_func_from_config,
 )
-from oot_test_utilities import _get_privateuse1_device_type
+from oot_test_utilities import (
+    _get_privateuse1_device_type,
+    _log_warning,
+    _log_error,
+    _regex_entries_for_name,
+    _build_test_entry_map,
+    _select_entry_by_op_index,
+    _select_entry_for_variant,
+    _extract_op_name_from_method,
+)
 
 warnings.filterwarnings("ignore", category=pytest.PytestUnknownMarkWarning)
-
-
-# ---------------------------------------------------------------------------
-# Logging utilities
-# ---------------------------------------------------------------------------
-
-
-def _log_warning(msg: str) -> None:
-    """Write warning message to stderr for visibility during test runs."""
-    os.write(2, f"[OOTDeviceTestBase WARNING] {msg}\n".encode())
-
-
-def _log_error(msg: str) -> None:
-    """Write error message to stderr for visibility during test runs."""
-    os.write(2, f"[OOTDeviceTestBase ERROR] {msg}\n".encode())
 
 
 # Resolve the actual backend name registered for privateuse1.
@@ -109,142 +106,6 @@ remove_builtin_privateuse1_test_base()
 
 
 # ---------------------------------------------------------------------------
-# Multi-entry test map helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_test_entry_map(file_entry: FileEntry) -> Dict[str, List["TestEntry"]]:
-    """Build {method_name -> [TestEntry, ...]} from file_entry.tests.
-
-    A single TestEntry can cover multiple test ids via name: [list].
-    Each method_name in the list gets its own entry in the map.
-
-    This supports multiple TestEntry objects per method_name.
-    This is needed when two configs target the same test name with different tags/dtypes
-    (e.g. the same op tested for two different models).
-    The correct entry for a given variant is resolved later by ``_select_entry_for_variant``
-    once the dtype is known from the instantiated method name.
-    """
-    result: Dict[str, List[TestEntry]] = {}
-    for entry in file_entry.tests:
-        for method_name in entry.method_names():
-            result.setdefault(method_name, []).append(entry)
-    return result
-
-
-def _entry_dtype_set(
-    entry: "TestEntry",
-    global_supported_dtypes: Optional[Set[torch.dtype]],
-) -> Optional[Set[torch.dtype]]:
-    """Return the effective dtype set for *entry*.
-
-    Priority (highest to lowest):
-      1. entry.edits.dtypes.include  -- explicit per-entry dtype list
-      2. global_supported_dtypes     -- global filter from the YAML global section
-      3. None                        -- no filtering; all dtypes match
-
-    Returns None when neither the entry nor the global config restricts dtypes,
-    meaning the entry is considered compatible with any dtype.
-    """
-    included = entry.edits.dtypes.resolved_include()
-    if included:
-        return included
-    return global_supported_dtypes  # may itself be None
-
-
-# Matches "test_model_ops_db_<unique>__<idx>_<device>_<dtype>", capturing
-# the op unique_name key into model_ops_entry_by_unique_name.
-_MODEL_OPS_VARIANT_RE = re.compile(
-    r"^test_model_ops_db_(?P<unique>.+?__\d+)_[A-Za-z0-9]+_\w+$"
-)
-
-
-def _select_entry_by_op_index(method_name: str) -> Optional["TestEntry"]:
-    """Resolve the TestEntry for a test_model_ops_db variant via the
-    authoritative unique_name mapping; returns None to let callers fall
-    back to the dtype heuristic."""
-    m = _MODEL_OPS_VARIANT_RE.match(method_name)
-    if not m:
-        return None
-    try:
-        from models.test_model_ops_v2 import (  # type: ignore
-            model_ops_entry_by_unique_name,
-        )
-    except ImportError:
-        return None
-    return model_ops_entry_by_unique_name.get(m.group("unique"))
-
-
-def _select_entry_for_variant(
-    entries: List["TestEntry"],
-    method_name: str,
-    global_supported_dtypes: Optional[Set[torch.dtype]],
-) -> "TestEntry":
-    """Pick the best-matching TestEntry for a concrete variant method name.
-
-    When only one entry exists the choice is trivial.  When multiple entries
-    share the same base test name merged from different configs we select
-    by matching the dtype embedded in *method_name* against each entry's
-    effective dtype set.
-
-    Selection rules:
-      1. Entry whose effective dtype set contains the variant's dtype.
-      2. Entry with no dtype restriction (effective set is None) acts as
-         a wildcard / fallback.
-      3. First entry in the list (last-resort fallback to old behaviour).
-
-    The list order reflects YAML insertion order so config-A entries take
-    precedence over config-B entries for identical dtype sets.
-    """
-    if len(entries) == 1:
-        return entries[0]
-
-    dtype_str = extract_dtype_from_name(method_name)
-    variant_dtype: Optional[torch.dtype] = None
-    if dtype_str:
-        try:
-            variant_dtype = parse_dtype(dtype_str)
-        except ValueError:
-            pass
-
-    # Pass 1 - strict dtype match
-    if variant_dtype is not None:
-        for entry in entries:
-            eset = _entry_dtype_set(entry, global_supported_dtypes)
-            if eset is not None and variant_dtype in eset:
-                return entry
-
-    # Pass 2 - wildcard entry (no dtype restriction)
-    for entry in entries:
-        eset = _entry_dtype_set(entry, global_supported_dtypes)
-        if eset is None:
-            return entry
-
-    # Pass 3 - fallback: return first entry
-    return entries[0]
-
-
-def _extract_op_name_from_method(
-    method_name: str, base_test_name: str
-) -> Optional[str]:
-    """Extract the op name from a parametrized method name.
-
-    method_name: test_scalar_support_add_<device>_float16
-    base_test_name: test_scalar_support
-    returns: "add"
-
-    Returns None if the op name cannot be determined.
-    """
-    if not method_name.startswith(base_test_name + "_"):
-        return None
-    remainder = method_name[len(base_test_name) + 1 :]  # "add_<device>_float16"
-    # op name is the first segment before the device suffix
-    if f"_{_OOT_DEVICE_TYPE}_" in remainder:
-        return remainder.split(f"_{_OOT_DEVICE_TYPE}_")[0]
-    return None
-
-
-# ---------------------------------------------------------------------------
 # TorchTestBase
 # ---------------------------------------------------------------------------
 
@@ -261,8 +122,16 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
     device_type: str = "privateuse1"
     precision: float = DEFAULT_FLOATING_PRECISION
 
-    # multiple configs targeting the same test name with different tags/dtypes.
-    TEST_ENTRIES: Dict[str, List["TestEntry"]] = {}  # {method_name -> [TestEntry, ...]}
+    # Exact-name lookup map: {base_method_name -> [TestEntry, ...]}
+    # Multiple entries per name arise when two configs target the same test
+    # with different tags/dtypes (e.g. same op tested for two different models).
+    TEST_ENTRIES: Dict[str, List["TestEntry"]] = {}
+
+    # Regex-pattern store: [(regex_pattern, TestEntry), ...]
+    # Populated alongside TEST_ENTRIES from YAML names that contain * ? [ ].
+    # Matched against concrete method names in instantiate_test().
+    REGEX_ENTRIES: List[Tuple[str, "TestEntry"]] = []
+
     UNLISTED_TEST_MODE: str = UNLISTED_MODE_XFAIL  # file-level default
     SUPPORTED_OPS_CONFIG: Dict[str, "SupportedOpConfig"] = {}  # {op_name -> config}
     SUPPORTED_MODULES_CONFIG: Dict[
@@ -270,6 +139,7 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
     ] = {}  # {module_name -> config}
     GLOBAL_SUPPORTED_DTYPES: Optional[Set[torch.dtype]] = None  # None = no filtering
     GLOBAL_DTYPE_PRECISION: Dict[torch.dtype, "Precision"] = {}
+    GLOBAL_DTYPE_FORCE_XFAIL: Set[torch.dtype] = set()
 
     # File-level module filtering (populated during config load)
     # Use None as sentinel to indicate not yet initialized, avoiding shared mutable default
@@ -297,6 +167,9 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
         if not path or getattr(cls, "_yaml_loaded", False):
             return
 
+        # Reset regex store so a fresh load always starts clean.
+        cls.REGEX_ENTRIES = []
+
         config: OOTTestConfig = load_yaml_config(path)
 
         # global op filtering and overrides
@@ -318,12 +191,17 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
         cls.GLOBAL_DTYPE_PRECISION = (
             config.global_config.resolved_supported_dtypes_precision()
         )
+        cls.GLOBAL_DTYPE_FORCE_XFAIL = (
+            config.global_config.resolved_supported_dtypes_force_xfail()
+        )
 
         file_entry: FileEntry = resolve_current_file(config, path)
 
-        # Build multi-entry map: same method_name can have multiple TestEntry
-        # objects when configs differ in tags/dtypes for the same test.
-        cls.TEST_ENTRIES = _build_test_entry_map(file_entry)
+        # Build the exact-name lookup map and the regex-pattern list.
+        # Regex patterns (names containing regex metacharacters) go into
+        # REGEX_ENTRIES; everything else goes into TEST_ENTRIES keyed by
+        # exact method name.
+        cls.TEST_ENTRIES, cls.REGEX_ENTRIES = _build_test_entry_map(file_entry)
         cls.UNLISTED_TEST_MODE = file_entry.unlisted_test_mode
 
         # Initialize file-level module tracking for this config load
@@ -473,6 +351,14 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
         # single-entry lookup for backward compatibility.
         if entry is None:
             entries = cls.TEST_ENTRIES.get(base_test_name)
+            if not entries:
+                # Also check regex patterns before giving up.
+                entries = (
+                    _regex_entries_for_name(
+                        base_test_name, getattr(cls, "REGEX_ENTRIES", [])
+                    )
+                    or None
+                )
             if entries:
                 entry = _select_entry_for_variant(
                     entries, method_name, cls.GLOBAL_SUPPORTED_DTYPES
@@ -514,11 +400,21 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
         # apply force_xfail from op-level config
         # extract op name from method_name — format: test_name_opname_device_dtype
         # force_xfail only flips mandatory_success → xfail, leaves others unchanged
-        op_name = _extract_op_name_from_method(method_name, base_test_name)
+        op_name = _extract_op_name_from_method(
+            method_name, base_test_name, _OOT_DEVICE_TYPE
+        )
         if effective_mode == MODE_MANDATORY_SUCCESS:
             op_cfg = cls.SUPPORTED_OPS_CONFIG.get(op_name) if op_name else None
             if op_cfg is not None and op_cfg.force_xfail:
                 effective_mode = MODE_XFAIL
+
+        if effective_mode == MODE_MANDATORY_SUCCESS and dtype_str:
+            try:
+                dtype = parse_dtype(dtype_str)
+                if dtype in cls.GLOBAL_DTYPE_FORCE_XFAIL:
+                    effective_mode = MODE_XFAIL
+            except ValueError:
+                pass
 
         # resolve final decision
         if effective_mode == MODE_SKIP:
@@ -546,12 +442,32 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
     @classmethod
     def instantiate_test(cls, name, test, *, generic_cls=None):
         _OOTOnlyOnPatcher(test, _OOT_DEVICE_TYPE).patch()
+        _OOTNativeDeviceTypesPatcher.patch()
         cls._load_test_suite_config()
 
-        # Retrieve all entries for this base test name.
+        # ------------------------------------------------------------------
+        # Retrieve all TestEntry objects for this base test name.
         # There may be multiple when different configs target the same test
         # name with different tags/dtypes (e.g. same op, different models).
-        all_entries_for_name: List[TestEntry] = cls.TEST_ENTRIES.get(name, [])
+        #
+        # 1. Exact-name lookup in TEST_ENTRIES
+        # 2. Regex-pattern lookup in REGEX_ENTRIES.  A YAML entry like
+        #    ``TestOps::test_rope_fms_.*`` stores ``test_rope_fms_.*`` as a
+        #    regex pattern; re.fullmatch is used to test whether ``name``
+        #    matches.
+        #
+        # When both sources return entries the exact-name entries come first,
+        # preserving the original priority ordering.
+        # ------------------------------------------------------------------
+        all_entries_for_name: List[TestEntry] = list(cls.TEST_ENTRIES.get(name, []))
+
+        # Regex-pattern lookup: extend with any entries whose pattern matches
+        # the current base test name.  Skip entries already in the exact list
+        # to avoid double-processing the same TestEntry object.
+        regex_matches = _regex_entries_for_name(name, getattr(cls, "REGEX_ENTRIES", []))
+        for _re in regex_matches:
+            if _re not in all_entries_for_name:
+                all_entries_for_name.append(_re)
 
         # ------------------------------------------------------------------
         # Collect the union of all tags across all entries for collection-time
@@ -696,18 +612,35 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
         # Dynamically adds pytest marker to each of modules and dtype passed to @modules
         _OOTModuleMarkerPatcher(test).patch()
 
+        # Attaches platform__<arch> marker
+        _OOTPlatformMarkerPatcher(test).patch()
+
         existing_methods = set(cls.__dict__.keys())
         super().instantiate_test(name, test, generic_cls=generic_cls)
         new_methods = set(cls.__dict__.keys()) - existing_methods
+
+        # ------------------------------------------------------------------
+        # Collect CPU move functions from global config and all test entries
+        # for this test name. Then apply the CPU move patcher to move tensor
+        # arguments to CPU for specified methods (e.g., assertEqual).
+        # ------------------------------------------------------------------
+        # Collect CPU move functions from all test entries for this test name.
+        # Then apply the CPU move patcher to move tensor arguments to CPU.
+        cpu_move_functions: Set[str] = set()
+        for _e in all_entries_for_name:
+            per_test_funcs = _e.edits.functions.resolved_cpu_move_functions()
+            if per_test_funcs:
+                cpu_move_functions.update(per_test_funcs)
+        if cpu_move_functions:
+            _OOTCpuMovePatcher(cls, list(cpu_move_functions), test_name=name).patch()
 
         _tags_to_write: Dict[str, List[str]] = {}
         for method_name in new_methods:
             # ------------------------------------------------------------------
             # Select the correct TestEntry for THIS variant using dtype matching.
-            # Instead of using a single shared entry for
-            # all variants, we pick the entry whose dtype set covers the dtype
-            # embedded in method_name (e.g. bfloat16 -> bfloat16 entry,
-            # float16 -> float16 entry).
+            # Instead of using a single shared entry for all variants, we pick
+            # the entry whose dtype set covers the dtype embedded in method_name
+            # (e.g. bfloat16 -> bfloat16 entry, float16 -> float16 entry).
             # ------------------------------------------------------------------
             resolved_entry: Optional[TestEntry] = None
             if all_entries_for_name:
@@ -762,7 +695,7 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
             # patchers attached to this specific instantiated method, and
             # union them with the variant-specific tags so _XML_INJECT_PY
             # only needs to handle one flat tag list per method.
-            _DYNAMIC_PREFIXES = ("op__", "dtype__", "module__")
+
             existing_fn = cls.__dict__.get(method_name)
             dynamic_tags: List[str] = []
             if existing_fn is not None:
@@ -770,7 +703,7 @@ class TorchTestBase(PrivateUse1TestBase):  # type: ignore[name-defined]  # noqa:
                     {
                         m.name
                         for m in getattr(existing_fn, "pytestmark", [])
-                        if any(m.name.startswith(p) for p in _DYNAMIC_PREFIXES)
+                        if any(m.name.startswith(p) for p in _DYNAMIC_TAG_PREFIXES)
                     }
                 )
 
