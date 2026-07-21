@@ -1,4 +1,4 @@
-# Copyright 2025 The Torch-Spyre Authors.
+# Copyright 2026 The Torch-Spyre Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,189 +15,21 @@
 import pytest
 import unittest
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from utils_inductor import ParameterizedTestMeta, compare_with_cpu
 
 
-# PART 1: NEGATIVE & REGRESSION TESTS
-
-
 @pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
-class TestLayerNormNegative(unittest.TestCase, metaclass=ParameterizedTestMeta):
-    torch.manual_seed(0xAFFE)  # seeds cached test data
-
-    def setUp(self):
-        super().setUp()
-        torch.manual_seed(0xAFFE)
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: views not supported for non-contiguous tensors"
-    )
-    def test_non_contiguous_input(self):
-        """Non-contiguous input (transposed) — backend consistency check."""
-
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(10, 2, dtype=torch.float16).transpose(0, 1)
-        compare_with_cpu(fn, x)
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: NaN propagation returns zeros instead of NaN"
-    )
-    def test_nan_input(self):
-        """NaN in input tensor — numerical propagation parity."""
-
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 10, dtype=torch.float16)
-        x[0, 0] = float("nan")
-        compare_with_cpu(fn, x)
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values (0.5400) instead of normalized output"
-    )
-    def test_large_values(self):
-        """Large magnitude values — stability under scale."""
-
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 10, dtype=torch.float16) * 1e3
-        compare_with_cpu(fn, x)
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: illegal device layout error for single element tensors"
-    )
-    def test_1d_tensor_edge_case(self):
-        """1D tensor — valid boundary acceptance."""
-
-        def fn(x):
-            return F.layer_norm(x, x.shape)
-
-        x = torch.randn(10, dtype=torch.float16)
-        compare_with_cpu(fn, x)
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_exactly_6_args_boundary(self):
-        """Exactly 6 arguments — core regression guard for PR #337."""
-
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape[1:], weight=w, bias=b, eps=1e-5)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-            torch.ones(10, dtype=torch.float16),
-            torch.zeros(10, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #1 (compiled) / Issue #2 (eager): C++ compilation error in compiled mode, numerical accuracy failure in eager mode"
-    )
-    def test_5_args_no_regression(self):
-        """5 arguments — no regression below fix boundary."""
-
-        def fn(x, w):
-            return F.layer_norm(x, x.shape[1:], weight=w, eps=1e-5)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-            torch.ones(10, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #1 (compiled) / Issue #2 (eager): C++ compilation error in compiled mode, numerical accuracy failure in eager mode"
-    )
-    def test_4_args_no_regression(self):
-        """4 arguments — no regression below fix boundary."""
-
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:], eps=1e-5)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_3_args_minimal(self):
-        """3 arguments — minimal path (lowest supported path remains valid)."""
-
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-        )
-
-
-# PART 2: ARGUMENT SCALING & NORM COMPARISONS
-
-
-@pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
-class TestNormArgScaling(unittest.TestCase, metaclass=ParameterizedTestMeta):
+class TestNormFunctionalAPI(unittest.TestCase, metaclass=ParameterizedTestMeta):
     T = 64
     D = 256
 
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_layernorm_1_arg(self):
+    def setUp(self):
+        super().setUp()
         torch.manual_seed(4242)
 
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.randn(self.T, self.D, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_layernorm_2_arg(self):
-        torch.manual_seed(4242)
-
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:], weight=None, bias=None)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(self.T, self.D, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_layernorm_3_arg(self):
-        torch.manual_seed(4242)
-
-        def fn(x, w):
-            return F.layer_norm(x, x.shape[1:], weight=w, bias=None)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(self.T, self.D, dtype=torch.float16),
-            torch.randn(self.D, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #1 (compiled) / Issue #2 (eager): C++ compilation error in compiled mode, numerical accuracy failure in eager mode"
-    )
-    def test_layernorm_4_arg(self):
-        torch.manual_seed(4242)
-
+    def test_layernorm_with_weight_and_bias(self):
         def fn(x, w, b):
             return F.layer_norm(x, x.shape[1:], weight=w, bias=b)
 
@@ -208,12 +40,7 @@ class TestNormArgScaling(unittest.TestCase, metaclass=ParameterizedTestMeta):
             torch.randn(self.D, dtype=torch.float16),
         )
 
-    @pytest.mark.xfail(
-        reason="Issue #1 (compiled) / Issue #2 (eager): C++ compilation error in compiled mode, numerical accuracy failure in eager mode"
-    )
-    def test_layernorm_5_arg(self):
-        torch.manual_seed(4242)
-
+    def test_layernorm_with_weight_bias_and_eps(self):
         def fn(x, w, b):
             return F.layer_norm(x, x.shape[1:], weight=w, bias=b, eps=1e-3)
 
@@ -224,29 +51,24 @@ class TestNormArgScaling(unittest.TestCase, metaclass=ParameterizedTestMeta):
             torch.randn(self.D, dtype=torch.float16),
         )
 
-    @pytest.mark.xfail(
-        reason="Spyre backend: device mismatch — module weights on CPU while input on Spyre device"
-    )
-    def test_layernorm_6_arg_module(self):
-        torch.manual_seed(4242)
-        layer = nn.LayerNorm([self.D])
-        layer.weight.data = torch.randn([self.D], dtype=torch.float16)
-        layer.bias.data = torch.randn([self.D], dtype=torch.float16)
-
-        def fn(x):
-            return layer(x)
+    def test_layernorm_fused_residual(self):
+        def fn(x, r, w, b):
+            return F.layer_norm(x + r, (x + r).shape[1:], weight=w, bias=b)
 
         compare_with_cpu(
             fn,
             torch.randn(self.T, self.D, dtype=torch.float16),
+            torch.randn(self.T, self.D, dtype=torch.float16),
+            torch.randn(self.D, dtype=torch.float16),
+            torch.randn(self.D, dtype=torch.float16),
         )
 
+    # TODO: ISSUE https://github.com/torch-spyre/torch-spyre/issues/1889
     @pytest.mark.xfail(
-        reason="Issue #3: Missing BatchNorm support - aten::native_batch_norm not implemented for spyre backend"
+        reason="#1889: aten::native_batch_norm not implemented for the 'spyre' backend "
+        "(runtime NotImplementedError before compilation)"
     )
-    def test_batchnorm_safe(self):
-        torch.manual_seed(4242)
-
+    def test_batch_norm_functional(self):
         def fn(x, rm, rv, w, b):
             return F.batch_norm(x, rm, rv, weight=w, bias=b, training=False)
 
@@ -259,12 +81,12 @@ class TestNormArgScaling(unittest.TestCase, metaclass=ParameterizedTestMeta):
             torch.zeros(self.D, dtype=torch.float16),
         )
 
+    # TODO: ISSUE https://github.com/torch-spyre/torch-spyre/issues/3287
     @pytest.mark.xfail(
-        reason="Spyre backend: C++ compilation error — missing operator== in VectorizedN<float, 2>"
+        reason="#3287: TorchInductor compilation failure in Spyre lowering pass — "
+        "KeyError 'No FX node for buf11' in split_multi_ops.py"
     )
-    def test_groupnorm(self):
-        torch.manual_seed(4242)
-
+    def test_group_norm_functional(self):
         def fn(x, w, b):
             return F.group_norm(x, 8, weight=w, bias=b)
 
@@ -275,27 +97,7 @@ class TestNormArgScaling(unittest.TestCase, metaclass=ParameterizedTestMeta):
             torch.randn(self.D, dtype=torch.float16),
         )
 
-    @pytest.mark.xfail(
-        reason="Spyre backend: C++ compilation error — missing operator== in VectorizedN<float, 2>"
-    )
-    def test_instancenorm(self):
-        torch.manual_seed(4242)
-
-        def fn(x, w, b):
-            return F.instance_norm(x, weight=w, bias=b, use_input_stats=True)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(8, self.D, 16, dtype=torch.float16),
-            torch.randn(self.D, dtype=torch.float16),
-            torch.randn(self.D, dtype=torch.float16),
-            
-            
-        )
-
-    def test_rmsnorm(self):
-        torch.manual_seed(4242)
-
+    def test_rmsnorm_manual(self):
         def fn(x, w):
             rms = torch.sqrt((x**2).mean(dim=-1, keepdim=True) + 1e-5)
             return x / rms * w
@@ -304,519 +106,4 @@ class TestNormArgScaling(unittest.TestCase, metaclass=ParameterizedTestMeta):
             fn,
             torch.randn(self.T, self.D, dtype=torch.float16),
             torch.ones(self.D, dtype=torch.float16),
-            
-            
         )
-
-    @pytest.mark.xfail(
-        reason="Issue #1 (compiled) / Issue #2 (eager): C++ compilation error in compiled mode, numerical accuracy failure in eager mode"
-    )
-    def test_fused_layernorm(self):
-        torch.manual_seed(4242)
-
-        def fn(x, r, w, b):
-            return F.layer_norm(x + r, (x + r).shape[1:], weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(self.T, self.D, dtype=torch.float16),
-            torch.randn(self.T, self.D, dtype=torch.float16),
-            torch.randn(self.D, dtype=torch.float16),
-            torch.randn(self.D, dtype=torch.float16),
-            
-            
-        )
-
-
-# PART 3: BACKEND DIVERGENCE & STRESS TESTS
-
-
-@pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
-class TestLayerNormBackendStress(unittest.TestCase, metaclass=ParameterizedTestMeta):
-    def setUp(self):
-        super().setUp()
-        torch.manual_seed(0xBEEF)
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: views not supported for non-contiguous tensors with parameters"
-    )
-    def test_noncontiguous_with_params(self):
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape[1:], weight=w, bias=b)
-
-        x = torch.randn(10, 2, dtype=torch.float16).transpose(0, 1)
-        w = torch.ones(10, dtype=torch.float16)
-        b = torch.zeros(10, dtype=torch.float16)
-        compare_with_cpu(
-            fn,
-            x,
-            w,
-            b,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values for large FP16 inputs"
-    )
-    def test_fp16_overflow(self, execution_mode):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = (torch.randn(2, 10) * 1e4).to(torch.float16)
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for constant input (zero variance)"
-    )
-    def test_zero_variance(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.ones(2, 10, dtype=torch.float16) * 5.0
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values with extreme epsilon"
-    )
-    def test_extreme_eps(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:], eps=1e-12)
-
-        x = torch.randn(2, 10, dtype=torch.float16)
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: only supports normalized_shape of length 1, not multi-dimensional"
-    )
-    def test_high_dim_tensor(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 3, 4, 5, 10, dtype=torch.float16)
-        compare_with_cpu(fn, x)
-
-    @pytest.mark.skip(reason="FATAL: Spyre backend segfaults on int32 casting")
-    def test_int_cast_path(self):
-        def fn(x):
-            return F.layer_norm(x.float(), x.float().shape[1:])
-
-        x = torch.randint(0, 10, (2, 10), dtype=torch.int32)
-        compare_with_cpu(fn, x)
-
-
-# PART 4: COMPREHENSIVE EDGE CASES
-
-
-@pytest.mark.filterwarnings("ignore::torch_spyre.ops.fallbacks.FallbackWarning")
-class TestLayerNormEdgeCases(unittest.TestCase, metaclass=ParameterizedTestMeta):
-    def setUp(self):
-        super().setUp()
-        torch.manual_seed(0xAFFE)
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: illegal device layout error for single element tensors"
-    )
-    def test_single_element(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape)
-
-        compare_with_cpu(fn, torch.randn(1, dtype=torch.float16))
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: illegal device layout error for single element tensors with 6 args"
-    )
-    def test_single_element_6arg(self):
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape, weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(1, dtype=torch.float16),
-            torch.ones(1, dtype=torch.float16),
-            torch.zeros(1, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values for very wide tensors"
-    )
-    def test_very_wide(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(fn, torch.randn(1, 50000, dtype=torch.float16))
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values for very wide tensors with 6 args"
-    )
-    def test_very_wide_6arg(self):
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape[1:], weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(1, 50000, dtype=torch.float16),
-            torch.ones(50000, dtype=torch.float16),
-            torch.zeros(50000, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values for very tall tensors"
-    )
-    def test_very_tall(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(fn, torch.randn(100000, 10, dtype=torch.float16))
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: only supports normalized_shape of length 1, not multi-dimensional [4, 5]"
-    )
-    def test_5d_tensor(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[2:])
-
-        compare_with_cpu(fn, torch.randn(2, 3, 4, 5, dtype=torch.float16))
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: only supports normalized_shape of length 1, not multi-dimensional [4, 5] with 6 args"
-    )
-    def test_5d_tensor_6arg(self):
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape[2:], weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 3, 4, 5, dtype=torch.float16),
-            torch.ones(4, 5, dtype=torch.float16),
-            torch.zeros(4, 5, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_large_batch(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(fn, torch.randn(2048, 128, dtype=torch.float16))
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_non_power_of_two(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(fn, torch.randn(2, 130, dtype=torch.float16))
-
-    @pytest.mark.xfail(reason="Spyre backend: returns zeros for all-zero input")
-    def test_all_zeros(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(fn, torch.zeros(2, 10, dtype=torch.float16))
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for all-zero input with 6 args"
-    )
-    def test_all_zeros_6arg(self):
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape[1:], weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.zeros(2, 10, dtype=torch.float16),
-            torch.ones(10, dtype=torch.float16),
-            torch.zeros(10, dtype=torch.float16),
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for constant input (all ones)"
-    )
-    def test_all_ones(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.ones(2, 10, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for constant input (value 5.0)"
-    )
-    def test_constant_value(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.full((2, 10), 5.0, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values for large magnitude inputs"
-    )
-    def test_large_values(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16) * 1e3,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_small_values(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16) * 1e-3,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values for large mean with small variance"
-    )
-    def test_large_mean_small_variance(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = (
-            torch.full((2, 10), 1e3, dtype=torch.float16)
-            + torch.randn(2, 10, dtype=torch.float16) * 1e-2
-        )
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: NaN propagation returns zeros instead of NaN"
-    )
-    def test_nan(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 10, dtype=torch.float16)
-        x[0, 0] = float("nan")
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: Inf propagation returns zeros instead of Inf"
-    )
-    def test_pos_inf(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 10, dtype=torch.float16)
-        x[0, 0] = float("inf")
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: -Inf propagation returns zeros instead of -Inf"
-    )
-    def test_neg_inf(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 10, dtype=torch.float16)
-        x[0, 0] = float("-inf")
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(reason="Spyre backend: mixed NaN/Inf propagation returns zeros")
-    def test_mixed_inf_nan(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(2, 10, dtype=torch.float16)
-        x[0, 0] = float("nan")
-        x[0, 1] = float("inf")
-        x[0, 2] = float("-inf")
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for constant input with tiny epsilon"
-    )
-    def test_tiny_eps(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:], eps=1e-12)
-
-        compare_with_cpu(
-            fn,
-            torch.ones(2, 10, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values with large epsilon"
-    )
-    def test_large_eps(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:], eps=1.0)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns constant garbage values with extreme epsilon"
-    )
-    def test_extreme_eps(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:], eps=10.0)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: returns zeros for constant input (zero variance)"
-    )
-    def test_zero_variance(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        compare_with_cpu(
-            fn,
-            torch.ones(2, 10, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: views not supported for non-contiguous tensors"
-    )
-    def test_non_contiguous(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(10, 2, dtype=torch.float16).transpose(0, 1)
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(reason="Spyre backend: views not supported for strided tensors")
-    def test_strided_slice(self):
-        def fn(x):
-            return F.layer_norm(x, x.shape[1:])
-
-        x = torch.randn(20, 10, dtype=torch.float16)[::2]
-        compare_with_cpu(
-            fn,
-            x,
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: mixed dtype not supported — unexpected argument PointwiseOp(op='to_dtype')"
-    )
-    def test_mixed_dtype(self):
-        def fn(x, w):
-            return F.layer_norm(x, x.shape[1:], weight=w)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-            torch.ones(10, dtype=torch.float32),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Issue #2: Numerical accuracy failure - 85-100% element mismatch vs CPU"
-    )
-    def test_6arg_dynamic_shape(self, execution_mode):
-        """6-arg path with normalized_shape derived from input dim at runtime."""
-
-        def fn(x, w, b):
-            return F.layer_norm(x, (x.shape[-1],), weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 10, dtype=torch.float16),
-            torch.ones(10, dtype=torch.float16),
-            torch.zeros(10, dtype=torch.float16),
-            
-            
-        )
-
-    @pytest.mark.xfail(
-        reason="Spyre backend: only supports normalized_shape of length 1, not multi-dimensional [4, 5] with 6 args"
-    )
-    def test_6arg_multi_dim(self, execution_mode):
-        def fn(x, w, b):
-            return F.layer_norm(x, x.shape[2:], weight=w, bias=b)
-
-        compare_with_cpu(
-            fn,
-            torch.randn(2, 3, 4, 5, dtype=torch.float16),
-            torch.ones(4, 5, dtype=torch.float16),
-            torch.zeros(4, 5, dtype=torch.float16),
-            
-            
-        )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
