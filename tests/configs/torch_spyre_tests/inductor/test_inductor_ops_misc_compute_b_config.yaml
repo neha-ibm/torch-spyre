@@ -25,8 +25,6 @@ test_suite_config:
             - TestOps::test_group_norm_functional.*
             - TestOps::test_softmax.*
             - TestOps::test_softplus.*
-            - TestOps::test_softmax.*
-            - TestOps::test_softplus.*
             # embedding
             - TestOps::test_embedding.*
             # isin family — test_isin.* covers all test_isin_* variants
