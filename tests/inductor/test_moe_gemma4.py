@@ -375,10 +375,25 @@ def _moe_fp32_reference(hidden, ids, weights, bank):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason="Tracked by #4639: K=8 routing produces incorrect results on Spyre"
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4639: K=8 routing produces incorrect results on Spyre",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4639: K=8 routing produces incorrect results on Spyre",
+                strict=True,
+            ),
+        ),
+    ],
 )
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 def test_G4_RT_001_batch_routing(execution_mode):
     """64 tokens independently select exactly 8 experts."""
     logits = _router_logits(T64)
@@ -401,16 +416,26 @@ def test_G4_RT_001_batch_routing(execution_mode):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4500: stable sort (aten::sort.values_stable) unsupported",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_001_routed_row_permutation_integrity(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #4500: stable sort (aten::sort.values_stable) unsupported"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout"
-        )
     """One expert-sort permutation must preserve all routed-row columns."""
     _seed()
     T, K = T64, K8
@@ -443,16 +468,26 @@ def test_G4_AB_001_routed_row_permutation_integrity(execution_mode):
     assert torch.equal(sorted_a, activation[perm])
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4500: stable sort (aten::sort.values_stable) unsupported",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_002_bincount_segment_boundaries(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #4500: stable sort (aten::sort.values_stable) unsupported"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout"
-        )
     expert = _deterministic_all_experts().reshape(-1)
 
     def fn(e):
@@ -484,12 +519,26 @@ def test_G4_AB_002_bincount_segment_boundaries(execution_mode):
             assert torch.all(sorted_e[s:t] == e)
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4450: Incompatible host_size and dim_order during compiled layout propagation",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_005_reorder_activations_weights_token_ids(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
     _seed()
     hidden = torch.randn(T64, HIDDEN, dtype=torch.bfloat16)
     weights, expert_ids = _routing_weights(_router_logits(T64))
@@ -531,8 +580,25 @@ def test_G4_AB_005_reorder_activations_weights_token_ids(execution_mode):
     )
 
 
-@pytest.mark.skip(reason="Tracked by #673: aten::repeat_interleave unsupported")
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #673: aten::repeat_interleave unsupported",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #673: aten::repeat_interleave unsupported",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_008_exact_dst_pos_construction(execution_mode):
     counts = torch.zeros(EXPERTS, dtype=torch.long)
     counts[0] = 1
@@ -578,12 +644,26 @@ def test_G4_AB_008_exact_dst_pos_construction(execution_mode):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4643: aten::floor_divide unsupported for tile metadata construction",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4754: no offset-free alternative stick dimension for mutation target",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_003_pad_expert_segments_to_tile32(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #4643: aten::floor_divide unsupported for tile metadata construction"
-        )
     counts = torch.tensor([0, 1, 31, 32, 33, 63, 64] + [0] * 121)
 
     def fn(c):
@@ -606,12 +686,26 @@ def test_G4_AB_003_pad_expert_segments_to_tile32(execution_mode):
     assert tile_expert.numel() == tiles.sum().item()
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4643: aten::floor_divide unsupported for tile metadata construction",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4754: no offset-free alternative stick dimension for mutation target",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_004_tile_to_expert_assignment(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #4643: aten::floor_divide unsupported for tile metadata construction"
-        )
     counts = torch.zeros(EXPERTS, dtype=torch.long)
     counts[[0, 2, 7, 127]] = torch.tensor([1, 33, 64, 32])
 
@@ -709,10 +803,25 @@ def test_G4_FFN_002_512_pairs_one_expert(execution_mode):
     assert torch.equal(ref[1:].cpu(), y2[1:].cpu())
 
 
-@pytest.mark.skip(
-    reason="Tracked by #4645: aten::_unique2 unsupported during multi-expert routing"
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4645: aten::_unique2 unsupported during multi-expert routing",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4645: aten::_unique2 unsupported during multi-expert routing",
+                strict=True,
+            ),
+        ),
+    ],
 )
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 def test_G4_FFN_003_512_pairs_across_8_experts(execution_mode):
     _seed()
     T, K = T64, K8
@@ -742,16 +851,26 @@ def test_G4_FFN_003_512_pairs_across_8_experts(execution_mode):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_AB_007_per_tile_static_loop_scatter_add(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     _seed()
     hidden = torch.randn(T64, HIDDEN, dtype=torch.bfloat16)
     weights, expert_ids = _routing_weights(_router_logits(T64))
@@ -843,9 +962,27 @@ def test_G4_BE_001_per_tile_expert_slab_select(execution_mode):
     assert got.shape == (4, 32, HIDDEN)
 
 
-@pytest.mark.skip(reason="Tracked by #3507: Enable Tensor.index_add_ / aten::index_add")
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by hf-adapters #213: Spyre decomposition receives mixed CPU/Spyre inputs",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by hf-adapters #213: Spyre decomposition receives mixed CPU/Spyre inputs",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_BE_002_fixed_tile_sink_row_scatter_reduce(execution_mode):
+    """Scatter-reduce one fixed 32-row tile into destination rows."""
     _seed()
     T = 8
     seg_out = torch.randn(TILE, HIDDEN, dtype=torch.bfloat16)
@@ -884,16 +1021,26 @@ def test_G4_BE_002_fixed_tile_sink_row_scatter_reduce(execution_mode):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_E2E_001_moe_t8(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     _seed()
     T = T8
     hidden = torch.randn(T, HIDDEN, dtype=torch.bfloat16)
@@ -921,14 +1068,26 @@ def test_G4_E2E_001_moe_t8(execution_mode):
     _assert_no_nan_inf(got)
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3179: aten::pow unimplemented",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4443: unexpected stick expression during compiled MoE execution",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_E2E_002_transformer_block_attention_moe(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip("Tracked by #3179: aten::pow unimplemented")
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4443: unexpected stick expression during compiled MoE execution"
-        )
     """Gemma-style Transformer block: attention -> residual -> MoE -> residual."""
     _seed()
     T = T8
@@ -991,16 +1150,26 @@ def test_G4_E2E_002_transformer_block_attention_moe(execution_mode):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_DT_001_bf16_end_to_end_numerical(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     _seed()
     hidden = torch.randn(T64, HIDDEN, dtype=torch.bfloat16)
     weights, ids = _routing_weights(_router_logits(T64))
@@ -1027,16 +1196,26 @@ def test_G4_DT_001_bf16_end_to_end_numerical(execution_mode):
     _assert_close(got, ref)
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_DT_002_fp32_reference_vs_bf16_execution(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     _seed()
     hidden = torch.randn(T64, HIDDEN, dtype=torch.bfloat16)
     weights, ids = _routing_weights(_router_logits(T64))
@@ -1098,16 +1277,26 @@ def _run_case_with_ids(expert_ids, execution_mode):
     return meta
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_EC_001_repeated_expert_selection_within_token(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     ids = torch.zeros(T8, K8, dtype=torch.long)
     meta = _run_case_with_ids(ids, execution_mode)
     counts = meta[1]
@@ -1115,16 +1304,26 @@ def test_G4_EC_001_repeated_expert_selection_within_token(execution_mode):
     assert counts[1:].sum().item() == 0
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_EC_002_empty_expert_segments(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     ids = torch.arange(K8, dtype=torch.long).expand(T8, K8)
     meta = _run_case_with_ids(ids, execution_mode)
     counts = meta[1]
@@ -1134,10 +1333,25 @@ def test_G4_EC_002_empty_expert_segments(execution_mode):
     assert pad_off[-1].item() % TILE == 0
 
 
-@pytest.mark.skip(
-    reason="Tracked by #4649: Top-K tie handling returns incorrect expert IDs"
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4649: Top-K tied candidates hit a Spyre reduction/layout failure",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4649: Top-K tied candidates hit a Spyre reduction/layout failure",
+                strict=True,
+            ),
+        ),
+    ],
 )
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
 def test_G4_EC_003_topk_tied_candidates(execution_mode):
     T = 8
     logits = torch.zeros(T, EXPERTS, dtype=torch.bfloat16)
@@ -1166,7 +1380,25 @@ def test_G4_EC_003_topk_tied_candidates(execution_mode):
     _run_case_with_ids(ids, execution_mode)
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #1219: CPU tensor cannot be indexed with Spyre tensor in eager execution",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_EC_004_all_128_experts_active(execution_mode):
     ids = _deterministic_all_experts()
     assert torch.unique(ids).numel() == EXPERTS
@@ -1186,16 +1418,6 @@ def test_G4_EC_004_all_128_experts_active(execution_mode):
         counts,
     )
 
-    if execution_mode == "eager":
-        pytest.skip(
-            "#1219: CPU tensor cannot be indexed with Spyre tensor in eager execution"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "#4650: compiled advanced indexing fails with "
-            "unsupported multi-arg pointwise layout"
-        )
-
     _compare_mode(
         execution_mode,
         fn,
@@ -1205,16 +1427,26 @@ def test_G4_EC_004_all_128_experts_active(execution_mode):
     )
 
 
-@pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors",
+                strict=True,
+            ),
+        ),
+    ],
+)
 def test_G4_EC_005_single_expert_routing_all_tokens(execution_mode):
-    if execution_mode == "eager":
-        pytest.skip(
-            "Tracked by #3193: pointwise layout propagation cannot resolve stick incompatibility in Gemma 4 MoE"
-        )
-    if execution_mode == "compiled":
-        pytest.skip(
-            "Tracked by #4648: restickify padding fails for Gemma 4 MoE routed tensors"
-        )
     ids = torch.zeros(T64, K8, dtype=torch.long)
     meta = _run_case_with_ids(ids, execution_mode)
     counts = meta[1]
