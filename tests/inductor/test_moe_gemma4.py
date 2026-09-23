@@ -23,7 +23,7 @@ import sys
 import pytest
 import torch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(__file__))
 from utils_inductor import compare_with_cpu
 
 
@@ -120,10 +120,11 @@ def _route(logits: torch.Tensor):
 
 
 def _routing_weights(logits: torch.Tensor):
-    values, indices = _route(logits)
-    weights = torch.softmax(values, dim=-1)
+    # Gemma 4: softmax over all 128 experts -> top-8 -> renormalize.
+    probs = torch.softmax(logits, dim=-1)
+    weights, indices = torch.topk(probs, K8, dim=-1)
     weights = weights / weights.sum(dim=-1, keepdim=True)
-    return weights.float(), indices
+    return weights.float(), indices.long()
 
 
 def _flatten_routing(
@@ -371,7 +372,7 @@ def _moe_fp32_reference(hidden, ids, weights, bank):
 
 
 # ---------------------------------------------------------------------------
-# 3.1 Router / Top-K Selection
+# 3.1 Router / Top-K Selection / Routing Weights
 # ---------------------------------------------------------------------------
 
 
@@ -411,6 +412,88 @@ def test_G4_RT_001_batch_routing(execution_mode):
     assert int(ref_ids.min()) >= 0 and int(ref_ids.max()) < EXPERTS
 
 
+@pytest.mark.parametrize(
+    "execution_mode",
+    [
+        pytest.param(
+            "eager",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4639: K=8 routing produces incorrect results on Spyre",
+                strict=True,
+            ),
+        ),
+        pytest.param(
+            "compiled",
+            marks=pytest.mark.xfail(
+                reason="Tracked by #4649: Top-K reduction/layout/lowering failure on Spyre",
+                strict=True,
+            ),
+        ),
+    ],
+)
+def test_G4_RT_002_routing_weight_normalization(execution_mode):
+    """
+    Verify Gemma 4 routing weights:
+
+        softmax over all 128 experts
+        -> top-8 expert selection
+        -> renormalize selected weights
+    """
+    _seed()
+    T = T8
+    logits = _router_logits(T)
+
+    def fn(x):
+        return _routing_weights(x)
+
+    _compare_mode(
+        execution_mode,
+        fn,
+        logits,
+        atol=FP32_ATOL,
+        rtol=FP32_RTOL,
+    )
+
+    # Explicit Gemma 4 CPU reference:
+    # 1. Softmax over all 128 experts.
+    probs = torch.softmax(logits, dim=-1)
+
+    # 2. Select the top-8 experts.
+    ref_weights, ref_ids = torch.topk(probs, K8, dim=-1)
+
+    # 3. Renormalize the selected 8 probabilities.
+    ref_weights = ref_weights / ref_weights.sum(dim=-1, keepdim=True)
+
+    ref_weights = ref_weights.float()
+    ref_ids = ref_ids.long()
+
+    assert ref_weights.shape == (T, K8)
+    assert ref_ids.shape == (T, K8)
+
+    torch.testing.assert_close(
+        ref_weights.sum(dim=-1),
+        torch.ones(T, dtype=torch.float32),
+        atol=FP32_ATOL,
+        rtol=FP32_RTOL,
+    )
+
+    got_weights, got_ids = fn(logits)
+
+    torch.testing.assert_close(
+        got_ids,
+        ref_ids,
+        atol=0,
+        rtol=0,
+    )
+
+    torch.testing.assert_close(
+        got_weights,
+        ref_weights,
+        atol=FP32_ATOL,
+        rtol=FP32_RTOL,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 3.3 Routed-row formation / grouping / dispatch
 # ---------------------------------------------------------------------------
@@ -429,7 +512,7 @@ def test_G4_RT_001_batch_routing(execution_mode):
         pytest.param(
             "compiled",
             marks=pytest.mark.xfail(
-                reason="Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout",
+                reason="Tracked by #4360: indexing a 1-D tensor fails to compile (no supported output layout)",
                 strict=True,
             ),
         ),
@@ -481,7 +564,7 @@ def test_G4_AB_001_routed_row_permutation_integrity(execution_mode):
         pytest.param(
             "compiled",
             marks=pytest.mark.xfail(
-                reason="Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout",
+                reason="Tracked by #4360: indexing a 1-D tensor fails to compile (no supported output layout)",
                 strict=True,
             ),
         ),
@@ -776,7 +859,7 @@ def test_G4_AB_006_pad_activations_weights_token_ids(execution_mode):
 
 
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
-def test_G4_FFN_002_512_pairs_one_expert(execution_mode):
+def test_G4_FFN_001_512_pairs_one_expert(execution_mode):
     _seed()
     x = torch.randn(T64 * K8, HIDDEN, dtype=torch.bfloat16)
     bank = _expert_weights([0])
@@ -822,7 +905,7 @@ def test_G4_FFN_002_512_pairs_one_expert(execution_mode):
         ),
     ],
 )
-def test_G4_FFN_003_512_pairs_across_8_experts(execution_mode):
+def test_G4_FFN_002_512_pairs_across_8_experts(execution_mode):
     _seed()
     T, K = T64, K8
     expert_ids = (torch.arange(T).unsqueeze(1) + torch.arange(K)) % K8
@@ -910,7 +993,7 @@ def test_G4_AB_007_per_tile_static_loop_scatter_add(execution_mode):
 
 
 @pytest.mark.parametrize("execution_mode", ["eager", "compiled"])
-def test_G4_LY_002_restickify_k8(execution_mode):
+def test_G4_LY_001_restickify_k8(execution_mode):
     """Production K=8 router-weight flattening and restickify path."""
     T, K = T64, K8
     logits = _router_logits(T)
@@ -968,14 +1051,14 @@ def test_G4_BE_001_per_tile_expert_slab_select(execution_mode):
         pytest.param(
             "eager",
             marks=pytest.mark.xfail(
-                reason="Tracked by hf-adapters #213: Spyre decomposition receives mixed CPU/Spyre inputs",
+                reason="Tracked by #3507: index_add/index_add_ support",
                 strict=True,
             ),
         ),
         pytest.param(
             "compiled",
             marks=pytest.mark.xfail(
-                reason="Tracked by hf-adapters #213: Spyre decomposition receives mixed CPU/Spyre inputs",
+                reason="Tracked by #3507: index_add/index_add_ support",
                 strict=True,
             ),
         ),
@@ -1393,7 +1476,7 @@ def test_G4_EC_003_topk_tied_candidates(execution_mode):
         pytest.param(
             "compiled",
             marks=pytest.mark.xfail(
-                reason="Tracked by #4650: compiled advanced indexing fails with unsupported multi-arg pointwise layout",
+                reason="Tracked by #4360: indexing a 1-D tensor fails to compile (no supported output layout)",
                 strict=True,
             ),
         ),
