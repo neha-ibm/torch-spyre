@@ -555,7 +555,7 @@ def test_G4_RT_002_routing_weight_normalization(execution_mode):
         ),
         pytest.param(
             "compiled",
-            marks=pytest.mark.xfail(strict=True, reason="Spyre issue #4650"),
+            marks=pytest.mark.xfail(strict=True, reason="Spyre issue #4360"),
         ),
     ],
 )
@@ -601,7 +601,7 @@ def test_G4_AB_001_routed_row_permutation_integrity(execution_mode):
         ),
         pytest.param(
             "compiled",
-            marks=pytest.mark.xfail(strict=True, reason="Spyre issue #4650"),
+            marks=pytest.mark.xfail(strict=True, reason="Spyre issue #4360"),
         ),
     ],
 )
@@ -1431,7 +1431,7 @@ def test_G4_EC_003_topk_tied_candidates(execution_mode):
         ),
         pytest.param(
             "compiled",
-            marks=pytest.mark.xfail(strict=True, reason="Spyre issue #4650"),
+            marks=pytest.mark.xfail(strict=True, reason="Spyre issue #4360"),
         ),
     ],
 )
