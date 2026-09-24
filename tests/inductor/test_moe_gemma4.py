@@ -382,34 +382,81 @@ def _moe_fp32_reference(hidden, ids, weights, bank):
         pytest.param(
             "eager",
             marks=pytest.mark.xfail(
-                reason="Tracked by #4639: K=8 routing produces incorrect results on Spyre",
+                reason="Tracked by #4639: no mechanism to resolve stick incompatibility for Top-K",
                 strict=True,
             ),
         ),
         pytest.param(
             "compiled",
             marks=pytest.mark.xfail(
-                reason="Tracked by #4639: K=8 routing produces incorrect results on Spyre",
+                reason="Tracked by #4718: Top-K stick must not contain the reduction or K dimension",
                 strict=True,
             ),
         ),
     ],
 )
 def test_G4_RT_001_batch_routing(execution_mode):
-    """64 tokens independently select exactly 8 experts."""
-    logits = _router_logits(T64)
+    """Gemma 4-style FP32 router softmax followed by Top-K(K=8)."""
+    torch.manual_seed(20260908)
+
+    x = torch.randn(
+        64,
+        128,
+        dtype=torch.bfloat16,
+    )
 
     def fn(x):
-        values, ids = torch.topk(x, K8, dim=-1)
-        return values.float(), ids
+        router_probabilities = torch.softmax(
+            x,
+            dim=-1,
+            dtype=torch.float32,
+        )
+        values, ids = torch.topk(
+            router_probabilities,
+            8,
+            dim=-1,
+        )
+        return values, ids
 
-    _compare_mode(execution_mode, fn, logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+    if execution_mode == "eager":
+        try:
+            compare_with_cpu(
+                fn,
+                x,
+                atol=0.005,
+                rtol=0.005,
+                run_compile=False,
+                run_eager=True,
+                cpu_compile=False,
+            )
+            print("Eager PASSED")
+        except Exception as e:
+            print("Eager FAILED:")
+            print(e)
+            raise
+    else:
+        try:
+            compare_with_cpu(
+                fn,
+                x,
+                atol=0.005,
+                rtol=0.005,
+                run_compile=True,
+                run_eager=False,
+                cpu_compile=True,
+            )
+            print("Compiled PASSED")
+        except Exception as e:
+            print("Compiled FAILED:")
+            print(e)
+            raise
 
-    ref_values, ref_ids = fn(logits)
-    assert ref_values.shape == (T64, K8)
-    assert ref_ids.shape == (T64, K8)
+    ref_values, ref_ids = fn(x)
+    assert ref_values.shape == (64, 8)
+    assert ref_ids.shape == (64, 8)
+    assert ref_values.dtype == torch.float32
     assert ref_ids.dtype == torch.long
-    assert int(ref_ids.min()) >= 0 and int(ref_ids.max()) < EXPERTS
+    assert int(ref_ids.min()) >= 0 and int(ref_ids.max()) < 128
 
 
 @pytest.mark.parametrize(
